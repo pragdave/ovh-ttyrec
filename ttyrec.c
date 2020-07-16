@@ -89,6 +89,7 @@
 #include "ttyrec.h"
 #include "io.h"
 #include "compress.h"
+#include "mjson.h"
 
 #ifdef HAVE_openpty
 # if defined(HAVE_openpty_pty_h)
@@ -177,6 +178,7 @@ void handle_cheatcodes(char c);
 // functions used by the child
 void dooutput(void);
 void sigwinch_handler_child(int signal);
+void write_json(FILE *fscript, Header *hp, char *obuf, int count);
 
 // functions used by the subchild
 void doshell(const char *, char **);
@@ -250,6 +252,7 @@ static int  opt_append          = 0;
 static int  opt_debug           = 0;
 static int  opt_count_bytes     = 0;
 static int  opt_cheatcodes      = 0;
+static int  opt_json_output     = 0;
 static char *opt_custom_message = NULL;
 
 static int use_tty   = 1; // no=0, yes=1
@@ -274,34 +277,35 @@ int main(int argc, char **argv)
     {
         static struct option long_options[] =
         {
-            { "zstd",             0, 0, 0   },
-            { "level",            1, 0, 'l' },
-            { "verbose",          0, 0, 'v' },
             { "append",           0, 0, 'a' },
             { "cheatcodes",       0, 0, 'c' },
-            { "no-cheatcodes",    0, 0, 'C' },
-            { "shell-cmd",        1, 0, 'e' },
-            { "dir",              1, 0, 'd' },
-            { "output",           1, 0, 'f' },
-            { "uuid",             1, 0, 'z' },
-            { "no-openpty",       0, 0, 'p' },
-            { "lock-timeout",     1, 0, 'l' },
-            { "kill-timeout",     1, 0, 'k' },
-            { "msg",              1, 0, 's' },
             { "count-bytes",      0, 0, 'n' },
-            { "term",             1, 0, 'T' },
-            { "version",          0, 0, 'V' },
+            { "dir",              1, 0, 'd' },
             { "help",             0, 0, 'h' },
+            { "help",             0, 0, 'h' },
+            { "json",             0, 0, 'j' },
+            { "kill-timeout",     1, 0, 'k' },
+            { "level",            1, 0, 'l' },
+            { "lock-timeout",     1, 0, 'l' },
             { "max-flush-time",   1, 0, 0   },
+            { "msg",              1, 0, 's' },
             { "name-format",      1, 0, 'F' },
-            { "warn-before-lock", 1, 0, 0   },
-            { "warn-before-kill", 1, 0, 0   },
-            { "help",             0, 0, 'h' },
+            { "no-cheatcodes",    0, 0, 'C' },
+            { "no-openpty",       0, 0, 'p' },
+            { "output",           1, 0, 'f' },
+            { "shell-cmd",        1, 0, 'e' },
+            { "term",             1, 0, 'T' },
             { "usage",            0, 0, 'h' },
+            { "uuid",             1, 0, 'z' },
+            { "verbose",          0, 0, 'v' },
+            { "version",          0, 0, 'V' },
+            { "warn-before-kill", 1, 0, 0   },
+            { "warn-before-lock", 1, 0, 0   },
+            { "zstd",             0, 0, 0   },
             { 0,                  0, 0, 0   }
         };
         int option_index = 0;
-        ch = getopt_long(argc, argv, "ZcCupVhvanf:z:d:t:T:k:s:e:l:F:", long_options, &option_index);
+        ch = getopt_long(argc, argv, "ZcCupVhijvanf:z:d:t:T:k:s:e:l:F:", long_options, &option_index);
         if (ch == -1)
         {
             break;
@@ -407,6 +411,11 @@ int main(int argc, char **argv)
 
         // ignored (for compatibility with ttyrec classic)
         case 'u':
+            break;
+
+        // output in json format
+        case 'j':
+            opt_json_output = 1;
             break;
 
         // ttyrec classic way of specifying the command to launch, it uses sh -c
@@ -1006,8 +1015,8 @@ void set_ttyrec_file_name(char **nameptr)
 
     if (namefmt == NULL)
     {
-        // - 4: length of potential ".zst" we might add below
-        if (snprintf(*nameptr, BUFSIZ - 4, "%s/%04u-%02u-%02u.%02u-%02u-%02u.%06lu.%s.ttyrec", dname, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, (long unsigned int)tv.tv_usec, uuid) == -1)
+        // - 5: length of potential ".json" we might add below
+        if (snprintf(*nameptr, BUFSIZ - 5, "%s/%04u-%02u-%02u.%02u-%02u-%02u.%06lu.%s.ttyrec", dname, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec, (long unsigned int)tv.tv_usec, uuid) == -1)
         {
             perror("snprintf()");
             free(*nameptr);
@@ -1016,14 +1025,14 @@ void set_ttyrec_file_name(char **nameptr)
     }
     else
     {
-        // - 4: length of potential ".zst" we might add below
-        if (strftime(*nameptr, BUFSIZ - 4, namefmt, t) == 0)
+        // - 5: length of potential ".json" we might add below
+        if (strftime(*nameptr, BUFSIZ - 5, namefmt, t) == 0)
         {
             perror("strftime()");
             free(*nameptr);
             fail();
         }
-        (*nameptr)[BUFSIZ - 5] = '\0';
+        (*nameptr)[BUFSIZ - 6] = '\0';
 
         char usec[7];
         if (snprintf(usec, 7, "%06lu", (unsigned long)tv.tv_usec) < 0)
@@ -1044,6 +1053,9 @@ void set_ttyrec_file_name(char **nameptr)
     {
         // we can strcat safely because we used BUFSIZ - 4 above
         strcat(*nameptr, ".zst");
+    }
+    else if (opt_json_output) {
+      strcat(*nameptr, ".json");
     }
 }
 
@@ -1447,13 +1459,21 @@ void dooutput(void)
                     break;
                 }
             }
-            (void)write_header(fscript, &h);
-            (void)fwrite_wrapper(obuf, 1, cc, fscript);
-            bytes_out    += cc;
-            last_activity = time(NULL);
-            lock_warned   = 0;
-            kill_warned   = 0;
-        }
+
+            if (opt_json_output)
+            {
+              write_json(fscript, &h, obuf, cc);
+            }
+            else
+            {
+              (void)write_header(fscript, &h);
+              (void)fwrite_wrapper(obuf, 1, cc, fscript);
+              bytes_out    += cc;
+              last_activity = time(NULL);
+              lock_warned   = 0;
+              kill_warned   = 0;
+            }
+      }
     }
 
     printdbg("child: end dooutput, waiting can_exit (== %d)\r\n", can_exit);
@@ -1474,6 +1494,58 @@ void dooutput(void)
         fprintf(stderr, "\r\nTTY_BYTES_OUT=%llu\r\n", bytes_out);
     }
     done(childexit);
+}
+
+void write_json(FILE *fscript, Header *hp, char *obuf, int count)
+{
+
+  char *buff = NULL;
+
+  fputs("[\n", fscript);
+  int len = mjson_printf(&mjson_print_dynamic_buf, &buff, "[%ld,%d,%.*Q]\n", hp->tv.tv_sec, hp->tv.tv_usec, count, obuf);
+  fwrite(buff, 1, len, fscript);
+  fputs("]\n", fscript);
+  free(buff);
+return;
+  while (count--)
+  {
+    char ch = *obuf++;
+
+    switch (ch) {
+    case '"':
+      fputs("\\\"", fscript);
+      break;
+    case '\\':
+      fputs("\\\\", fscript);
+      break;
+    case '\b':
+      fputs("\\b", fscript);
+      break;
+    case '\f':
+      fputs("\\f", fscript);
+      break;
+    case '\n':
+      fputs("\\n", fscript);
+      break;
+    case '\r':
+      fputs("\\r", fscript);
+      break;
+    case '\t':
+      fputs("\\t", fscript);
+      break;
+
+    default:
+      if (ch < 32 || ch > 127) 
+      {
+        unsigned int uch = (unsigned int)ch;
+        fprintf(fscript, "\\u%04.4x", uch);
+      }
+      else{
+        fputc(ch, fscript);
+      }
+    }
+  }
+  fputs("\"],\n", fscript);
 }
 
 
@@ -2053,6 +2125,7 @@ void help(void)
             "  -z, --uuid UUID           specify an UUID (can be any string) that will appear in the ttyrec output file names,\n"  \
             "                              and kept with SIGUSR1 rotations (default: own PID)\n"                                   \
             "  -f, --output FILE         full path of the first ttyrec file to write to (autogenerated if omitted)\n"              \
+            "  -j, --json                generate output as a json file, not a binary file\n"
             "  -d, --dir FOLDER          folder where to write the ttyrec files (taken from -f if omitted,\n"                      \
             "                              defaulting to working directory if both -f and -d are omitted)\n"                       \
             "  -F, --name-format FMT     custom strftime-compatible format string to qualify the full path of the output files,\n" \
