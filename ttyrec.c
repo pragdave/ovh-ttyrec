@@ -1509,7 +1509,7 @@ void write_json(FILE *fscript, Header *hp, char *obuf, int count)
 return;
   while (count--)
   {
-    char ch = *obuf++;
+    unsigned char ch = *obuf++;
 
     switch (ch) {
     case '"':
@@ -1538,7 +1538,7 @@ return;
       if (ch < 32 || ch > 127) 
       {
         unsigned int uch = (unsigned int)ch;
-        fprintf(fscript, "\\u%04.4x", uch);
+        fprintf(fscript, "\\u%4.4x", uch);
       }
       else{
         fputc(ch, fscript);

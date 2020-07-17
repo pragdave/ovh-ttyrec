@@ -139,7 +139,7 @@ int get_utf_len(unsigned char ch) {
   if ((ch & 0xf8) == 0xf0)
     return 3;
 
-  fprintf(stderr, "Invalid first byte in utf: %02.2x", ch);
+  fprintf(stderr, "Invalid first byte in utf: %2.2x", ch);
   exit(1);
 }
 
@@ -150,7 +150,7 @@ int convert_utf(unsigned char first_ch, const char *s, int len) {
   while (--len) {
     unsigned char next = *s++;
     if ((next & 0xc0) != 0x80) {
-      fprintf(stderr, "Invalid continuation for UTF: %02.2x\n", next);
+      fprintf(stderr, "Invalid continuation for UTF: %2.2x\n", next);
     }
     result = (result << 6) | (next & 0x3f);
   }
@@ -159,7 +159,7 @@ int convert_utf(unsigned char first_ch, const char *s, int len) {
 
 int unicode_escape(unsigned int ch, mjson_print_fn_t fn, void *fndata) {
   char result[7];
-  sprintf(result, "\\u%04.4x", ch);
+  sprintf(result, "\\u%4.4x", ch);
   return fn(result, 6, fndata);
 }
 
