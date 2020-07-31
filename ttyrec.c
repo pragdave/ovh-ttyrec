@@ -778,6 +778,10 @@ int main(int argc, char **argv)
         }
     }
 
+    if (opt_json_output) {
+      fprintf(fscript, "{ \"width\": %d, \"height\": %d, \"stream\": [\n", parent_stdin_winsize.ws_col, parent_stdin_winsize.ws_row);
+    }
+
     child = fork();
     if (child < 0)
     {
@@ -1496,15 +1500,30 @@ void dooutput(void)
     done(childexit);
 }
 
+int first_time = 1;
+
 void write_json(FILE *fscript, Header *hp, char *obuf, int count)
 {
 
   char *buff = NULL;
 
-  fputs("[\n", fscript);
-  int len = mjson_printf(&mjson_print_dynamic_buf, &buff, "[%ld,%d,%.*Q]\n", hp->tv.tv_sec, hp->tv.tv_usec, count, obuf);
+  if (first_time) {
+    first_time = 0;
+  }
+  else {
+    fputs(",", fscript);
+  }
+
+  int len = mjson_printf(
+      &mjson_print_dynamic_buf, 
+      &buff, 
+      "{\"time_S\":%ld,\"time_uS\":%d,\"data\":%.*Q}\n", 
+      hp->tv.tv_sec, 
+      hp->tv.tv_usec, 
+      count, 
+      obuf);
+
   fwrite(buff, 1, len, fscript);
-  fputs("]\n", fscript);
   free(buff);
 return;
   while (count--)
@@ -1571,6 +1590,7 @@ void doshell(const char *command, char **params)
         (void)close(stderr_pipe[1]);
     }
 
+    setenv("TTYREC_SESSION", "1", 1); 
     execvp(command, params);
 
     perror(command);
@@ -1655,6 +1675,9 @@ void done(int status)
         printdbg("child: done, cleaning up and exiting with %d (child=%d subchild=%d)\r\n", WEXITSTATUS(status), child, subchild);
         // if we were locked, unlock before exiting to avoid leaving the real terminal of our user stuck in altscreen
         unlock_session(SIGUSR2);
+        if (opt_json_output) {
+          fputs("]}\n", fscript);
+        }
         (void)fclose_wrapper(fscript);
         (void)close(master);
     }
